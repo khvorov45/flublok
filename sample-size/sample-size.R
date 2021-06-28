@@ -113,10 +113,7 @@ fit_one_study <- function(...) {
 }
 
 fit_many_studies <- function(nsim = 20, ...) {
-  future_map_dfr(
-    1:nsim, function(i) fit_one_study(...) %>% mutate(i = i),
-    .options = furrr_options(seed = NULL)
-  )
+  map_dfr(1:nsim, function(i) fit_one_study(...) %>% mutate(i = i))
 }
 
 summ_many_studies <- function(n_per_group = 50, nsim = 20, ...) {
@@ -145,6 +142,9 @@ plot_one_study() %>%
 plot_diffs_one_study(n_per_group = 5000) %>%
   save_plot("one-diff", width = 15, height = 10)
 
-sims <- map_dfr(c(50, 60, 70, 200, 220, 240), ~ summ_many_studies(.x, nsim = 2000))
+sims <- future_map_dfr(
+  c(50, 60, 70, 200, 220, 240), ~ summ_many_studies(.x, nsim = 2000),
+  .options = furrr_options(seed = NULL)
+)
 
 save_data(sims, "sims")
