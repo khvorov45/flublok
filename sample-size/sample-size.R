@@ -116,8 +116,11 @@ fit_many_studies <- function(nsim = 20, ...) {
   map_dfr(1:nsim, function(i) fit_one_study(...) %>% mutate(i = i))
 }
 
-summ_many_studies <- function(n_per_group = 50, nsim = 20, ...) {
-  fit_many_studies(nsim, n_per_group = n_per_group, ...) %>%
+summ_many_studies <- function(nsim = 20,
+                              n_per_group = 50,
+                              bflublok = 0.5,
+                              ...) {
+  fit_many_studies(nsim, n_per_group = n_per_group, bflublok = bflublok, ...) %>%
     filter(term %in% c("vacflublok", "vacflucellvax")) %>%
     # One-sided test can probably be justified as there is evidence that
     # recombinant is better
@@ -125,7 +128,8 @@ summ_many_studies <- function(n_per_group = 50, nsim = 20, ...) {
     group_by(term) %>%
     summarise(
       detect = sum(detect) / n(),
-      n_per_group = n_per_group,
+      n_per_group,
+      bflublok,
       .groups = "drop"
     )
 }
@@ -142,9 +146,22 @@ plot_one_study() %>%
 plot_diffs_one_study(n_per_group = 5000) %>%
   save_plot("one-diff", width = 15, height = 10)
 
-sims <- future_map_dfr(
-  c(50, 60, 70, 200, 220, 240), ~ summ_many_studies(.x, nsim = 2000),
-  .options = furrr_options(seed = NULL)
+params <- tribble(
+  ~n_per_group, ~bflublok,
+  50, 0.5,
+  60, 0.5,
+  70, 0.5,
+  200, 0.25,
+  220, 0.25,
+  240, 0.25
+)
+
+sims <- future_pmap_dfr(
+  params,
+  function(n_per_group, bflublok) {
+    summ_many_studies(nsim = 5000, n_per_group, bflublok)
+  },
+  .options = furrr_options(seed = 1)
 )
 
 save_data(sims, "sims")
