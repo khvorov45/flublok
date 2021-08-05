@@ -7,20 +7,20 @@ plan(multisession)
 
 sample_size_dir <- "sample-size"
 
-# Functions ===================================================================
+# SECTION Functions
 
-# Returns OG scale titres
+#' Returns OG scale titres
 censor_logtitres <- function(logtitres) {
   cuts <- cut(exp(logtitres), c(-Inf, 5 * 2^(1:10), Inf)) %>% as.integer()
   5 * 2^(cuts - 1)
 }
 
-# Returns log titres
+#' Returns log titres
 midpoint_titres <- function(titres) {
   if_else(titres == 5L, log(titres), log(titres) + log(2) / 2)
 }
 
-# Outcome - postvax titre
+#' Outcome - postvax titre
 one_study <- function(n_per_group = 50,
                       logbaseline_mean = 3.7,
                       logtitre_sd = 1,
@@ -40,7 +40,7 @@ one_study <- function(n_per_group = 50,
       )
     }
   )
-  groups %>%
+  study <- groups %>%
     mutate(
       id = row_number(),
       freq_lab = recode(freq, "0" = "Infrequent", "1" = "Frequent"),
@@ -61,6 +61,19 @@ one_study <- function(n_per_group = 50,
       logpostvax_mid = midpoint_titres(postvax),
       vac = factor(vac, levels = c("qiv", "flucellvax", "flublok"))
     )
+  attr(study, "params") <- tibble(
+    n_per_group,
+    logbaseline_mean,
+    logtitre_sd,
+    b0,
+    blogbaseline,
+    bfreq,
+    bflucellvax,
+    bflublok,
+    bflucellvax_freq_add,
+    bflublok_freq_add
+  )
+  study
 }
 
 plot_one_study <- function(...) {
@@ -108,8 +121,10 @@ save_plot <- function(plot, name, ...) {
 }
 
 fit_one_study <- function(...) {
-  lm(logpostvax_mid ~ logbaseline_mid + freq * vac, one_study(...)) %>%
-    broom::tidy()
+  study <- one_study(...)
+  lm(logpostvax_mid ~ logbaseline_mid + freq * vac, study) %>%
+    broom::tidy() %>%
+    bind_cols(attr(study, "params"))
 }
 
 fit_many_studies <- function(nsim = 20, ...) {
@@ -122,23 +137,18 @@ summ_many_studies <- function(nsim = 20,
                               ...) {
   fit_many_studies(nsim, n_per_group = n_per_group, bflublok = bflublok, ...) %>%
     filter(term %in% c("vacflublok", "vacflucellvax")) %>%
-    # One-sided test can probably be justified as there is evidence that
-    # recombinant is better
+    # NOTE(sen) One-sided test can probably be justified as there is evidence
+    # that recombinant is better
     mutate(detect = (estimate > 0) & ((p.value / 2) < 0.05)) %>%
-    group_by(term) %>%
-    summarise(
-      detect = sum(detect) / n(),
-      n_per_group,
-      bflublok,
-      .groups = "drop"
-    )
+    group_by(term, n_per_group, bflublok) %>%
+    summarise(detect = sum(detect) / n(), .groups = "drop")
 }
 
 save_data <- function(data, name) {
   write_csv(data, file.path(sample_size_dir, paste0(name, ".csv")))
 }
 
-# Script ======================================================================
+# SECTION Script
 
 plot_one_study() %>%
   save_plot("one", width = 15, height = 10)
