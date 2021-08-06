@@ -122,9 +122,29 @@ save_plot <- function(plot, name, ...) {
 
 fit_one_study <- function(...) {
   study <- one_study(...)
-  lm(logpostvax_mid ~ logbaseline_mid + freq * vac, study) %>%
+  fit <- lm(logpostvax_mid ~ logbaseline_mid + freq * vac, study)
+
+  # NOTE(sen) Work out the difference between recombinant and cell since it's
+  # not an explicit parameter
+  diff <- coef(fit)[["vacflublok"]] - coef(fit)[["vacflucellvax"]]
+  var_names_of_interest <- c("vacflublok", "vacflucellvax")
+  diff_var <- sum(vcov(fit)[var_names_of_interest, var_names_of_interest])
+  diff_sd <- sqrt(diff_var)
+  diff_statistic <- diff / diff_sd
+  df_residual <- df.residual(fit)
+  diff_p <- pt(abs(diff_statistic), df_residual, lower.tail = FALSE) * 2
+
+  fit %>%
     broom::tidy() %>%
-    bind_cols(attr(study, "params"))
+    bind_rows(tibble(
+      term = "diffblokcell",
+      estimate = diff,
+      std.error = diff_sd,
+      statistic = diff_statistic,
+      p.value = diff_p
+    )) %>%
+    bind_cols(attr(study, "params")) %>%
+    mutate(df_residual = df_residual)
 }
 
 fit_many_studies <- function(nsim = 20, ...) {
@@ -135,13 +155,28 @@ summ_many_studies <- function(nsim = 20,
                               n_per_group = 50,
                               bflublok = 0.5,
                               ...) {
-  fit_many_studies(nsim, n_per_group = n_per_group, bflublok = bflublok, ...) %>%
-    filter(term %in% c("vacflublok", "vacflucellvax")) %>%
+  detections <- fit_many_studies(nsim, n_per_group = n_per_group, bflublok = bflublok, ...) %>%
+    filter(term %in% c("vacflublok", "vacflucellvax", "diffblokcell")) %>%
     # NOTE(sen) One-sided test can probably be justified as there is evidence
     # that recombinant is better
-    mutate(detect = (estimate > 0) & ((p.value / 2) < 0.05)) %>%
-    group_by(term, n_per_group, bflublok) %>%
-    summarise(detect = sum(detect) / n(), .groups = "drop")
+    mutate(
+      detect_one = (estimate > 0) & ((p.value / 2) < 0.05),
+      detect_two = (estimate > 0) & (p.value < 0.05)
+    )
+  detections_add <- detections %>%
+    # NOTE(sen) What's after `i` has to be the same as what's after `term` in
+    # `summarise` below
+    group_by(i, n_per_group, bflublok, bflucellvax) %>%
+    summarise(
+      .groups = "drop",
+      detect_one = detect_one[term == "vacflublok"] & detect_one[term == "diffblokcell"],
+      detect_two = detect_two[term == "vacflublok"] & detect_two[term == "diffblokcell"],
+      term = "vacflublok+diffblokcell"
+    )
+  detections %>%
+    bind_rows(detections_add) %>%
+    group_by(term, n_per_group, bflublok, bflucellvax) %>%
+    summarise(across(contains("detect"), ~ sum(.x) / n()), .groups = "drop")
 }
 
 save_data <- function(data, name) {
@@ -158,12 +193,26 @@ plot_diffs_one_study(n_per_group = 5000) %>%
 
 params <- tribble(
   ~n_per_group, ~bflublok,
+  # NOTE(sen) bflublok one-sided
   50, 0.5,
+  55, 0.5,
+  60, 0.5,
+  # NOTE(sen) bflublok two-sided
   60, 0.5,
   70, 0.5,
+  80, 0.5,
+  # NOTE(sen) bflublok one-sided lower
   200, 0.25,
   220, 0.25,
-  240, 0.25
+  240, 0.25,
+  # NOTE(sen) Diff for one-sided
+  440, 0.5,
+  460, 0.5,
+  480, 0.5,
+  # NOTE(sen) Diff for two-sided
+  600, 0.5,
+  620, 0.5,
+  640, 0.5,
 )
 
 sims <- future_pmap_dfr(
